@@ -1,0 +1,249 @@
+{
+  "info": {
+    "name": "IdentitySync — Bitespeed Identity Reconciliation",
+    "_postman_id": "identity-sync-collection",
+    "description": "All scenarios for the POST /identify endpoint. Run requests in order — the first few build state that later requests depend on.\n\nSet the {{base_url}} variable to your deployed URL (e.g. https://your-app.onrender.com) or http://localhost:3000 for local.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "https://identitysync-lw5t.onrender.com",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health Check",
+      "item": [
+        {
+          "name": "GET /health",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/health",
+            "description": "Confirms the server is running."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"status\": \"ok\",\n  \"timestamp\": \"2024-01-01T00:00:00.000Z\"\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Spec Examples (from Assignment)",
+      "description": "Run these in order — they build on each other.",
+      "item": [
+        {
+          "name": "1. Create new primary (lorraine + 123456)",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/identify",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"lorraine@hillvalley.edu\",\n  \"phoneNumber\": \"123456\"\n}"
+            },
+            "description": "No existing contacts — creates a new primary.\n\nExpected: primaryContatctId set, emails=[\"lorraine@...\"], phoneNumbers=[\"123456\"], secondaryContactIds=[]"
+          }
+        },
+        {
+          "name": "2. New email on same phone → secondary created",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/identify",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"mcfly@hillvalley.edu\",\n  \"phoneNumber\": \"123456\"\n}"
+            },
+            "description": "Phone 123456 already exists (lorraine). New email mcfly@ → secondary created.\n\nExpected: primaryContatctId = lorraine's ID, emails=[\"lorraine@...\", \"mcfly@...\"], secondaryContactIds=[<new_id>]"
+          }
+        },
+        {
+          "name": "3. Query by phone only — idempotent",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/identify",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": null,\n  \"phoneNumber\": \"123456\"\n}"
+            },
+            "description": "Same chain, different query. No new contact created.\n\nExpected: same response as #2."
+          }
+        },
+        {
+          "name": "4. Query by primary email only — idempotent",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/identify",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"lorraine@hillvalley.edu\",\n  \"phoneNumber\": null\n}"
+            },
+            "description": "Expected: same consolidated response — both emails, one phone, one secondary."
+          }
+        },
+        {
+          "name": "5. Query by secondary email only — idempotent",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/identify",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"mcfly@hillvalley.edu\",\n  \"phoneNumber\": null\n}"
+            },
+            "description": "Querying by secondary's email still returns the full consolidated chain.\n\nExpected: same response as #2."
+          }
+        },
+        {
+          "name": "6. Cross-link: create george chain",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/identify",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"george@hillvalley.edu\",\n  \"phoneNumber\": \"919191\"\n}"
+            },
+            "description": "Creates a separate primary chain for george."
+          }
+        },
+        {
+          "name": "7. Cross-link: create biffsucks chain",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/identify",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"biffsucks@hillvalley.edu\",\n  \"phoneNumber\": \"717171\"\n}"
+            },
+            "description": "Creates a second separate primary chain for biffsucks."
+          }
+        },
+        {
+          "name": "8. Cross-link: merge two chains (george email + biffsucks phone)",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/identify",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"george@hillvalley.edu\",\n  \"phoneNumber\": \"717171\"\n}"
+            },
+            "description": "This request bridges the two separate chains. George (older) stays primary, biffsucks becomes secondary.\n\nExpected:\n- primaryContatctId = george's ID\n- emails[0] = \"george@hillvalley.edu\"  ← primary's email first\n- phoneNumbers[0] = \"919191\"            ← primary's phone first\n- emails contains biffsucks@...\n- phoneNumbers contains 717171\n- secondaryContactIds has 1 entry"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Input Handling",
+      "item": [
+        {
+          "name": "phoneNumber as integer (not string)",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/identify",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"integer@test.com\",\n  \"phoneNumber\": 777777\n}"
+            },
+            "description": "Spec defines phoneNumber as `number` type. Service accepts integer and converts to string internally.\n\nExpected: phoneNumbers=[\"777777\"]"
+          }
+        },
+        {
+          "name": "Email only (no phoneNumber)",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/identify",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"emailonly@hillvalley.edu\"\n}"
+            },
+            "description": "Creates a primary with email only.\n\nExpected: emails=[\"emailonly@...\"], phoneNumbers=[], secondaryContactIds=[]"
+          }
+        },
+        {
+          "name": "Phone only (no email)",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/identify",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phoneNumber\": \"999000\"\n}"
+            },
+            "description": "Creates a primary with phone only.\n\nExpected: emails=[], phoneNumbers=[\"999000\"], secondaryContactIds=[]"
+          }
+        },
+        {
+          "name": "Email normalization — uppercase input",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/identify",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"LORRAINE@HILLVALLEY.EDU\",\n  \"phoneNumber\": \"123456\"\n}"
+            },
+            "description": "Email is normalized to lowercase before matching/storing. LORRAINE@HILLVALLEY.EDU should match lorraine@hillvalley.edu.\n\nExpected: same consolidated response as request #2 — no new contact created."
+          }
+        },
+        {
+          "name": "Empty string email treated as absent",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/identify",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"\",\n  \"phoneNumber\": \"888111\"\n}"
+            },
+            "description": "Empty string email is treated the same as omitting email.\n\nExpected: 200, emails=[], phoneNumbers=[\"888111\"]"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Validation Errors",
+      "item": [
+        {
+          "name": "400 — both fields absent",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/identify",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            },
+            "description": "Expected: 400 Bad Request"
+          }
+        },
+        {
+          "name": "400 — both fields are null",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/identify",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": null,\n  \"phoneNumber\": null\n}"
+            },
+            "description": "Expected: 400 Bad Request"
+          }
+        }
+      ]
+    }
+  ]
+}
