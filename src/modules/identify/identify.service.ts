@@ -1,6 +1,48 @@
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 import type { Contact, IdentifyResponse } from "./identify.types.js";
 import type { IdentifyBody } from "./identify.validation.js";
+
+const CHAIN_CTE = `
+  WITH RECURSIVE chain AS (
+    SELECT id, phone_number, email, linked_id, link_precedence, created_at, updated_at, deleted_at
+    FROM contacts WHERE id = $1 AND deleted_at IS NULL
+    UNION ALL
+    SELECT c.id, c.phone_number, c.email, c.linked_id, c.link_precedence, c.created_at, c.updated_at, c.deleted_at
+    FROM contacts c
+    INNER JOIN chain ch ON c.linked_id = ch.id
+    WHERE c.deleted_at IS NULL
+  )
+  SELECT * FROM chain
+`;
+
+type ContactRow = {
+  id: number;
+  phone_number: string | null;
+  email: string | null;
+  linked_id: number | null;
+  link_precedence: string;
+  created_at: Date;
+  updated_at: Date;
+  deleted_at: Date | null;
+};
+
+function toContact(r: ContactRow): Contact {
+  return {
+    id: r.id,
+    phoneNumber: r.phone_number,
+    email: r.email,
+    linkedId: r.linked_id,
+    linkPrecedence: r.link_precedence as "primary" | "secondary",
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+    deletedAt: r.deleted_at,
+  };
+}
+
+async function fetchChain(client: PoolClient, primaryId: number): Promise<ContactRow[]> {
+  const result = await client.query(CHAIN_CTE, [primaryId]);
+  return result.rows as ContactRow[];
+}
 
 function normalizeEmail(v: string | undefined): string | undefined {
   if (v == null || v === "") return undefined;
@@ -84,28 +126,7 @@ export function createIdentifyService(pool: Pool) {
         `;
         const matches = await client.query(matchQuery, params);
 
-        const rows = matches.rows as Array<{
-          id: number;
-          phone_number: string | null;
-          email: string | null;
-          linked_id: number | null;
-          link_precedence: string;
-          created_at: Date;
-          updated_at: Date;
-          deleted_at: Date | null;
-        }>;
-
-        const toContact = (r: (typeof rows)[0]) => ({
-          id: r.id,
-          phoneNumber: r.phone_number,
-          email: r.email,
-          linkedId: r.linked_id,
-          linkPrecedence: r.link_precedence as "primary" | "secondary",
-          createdAt: r.created_at,
-          updatedAt: r.updated_at,
-          deletedAt: r.deleted_at,
-        });
-
+        const rows = matches.rows as ContactRow[];
         const allMatches = rows.map(toContact);
         const matchMap = new Map(allMatches.map((c) => [c.id, c]));
 
@@ -119,7 +140,7 @@ export function createIdentifyService(pool: Pool) {
             [missing]
           );
           idsToFetch = new Set<number>();
-          for (const r of fetched.rows as typeof rows) {
+          for (const r of fetched.rows as ContactRow[]) {
             const c = toContact(r);
             matchMap.set(c.id, c);
             if (c.linkedId) idsToFetch.add(c.linkedId);
@@ -133,7 +154,7 @@ export function createIdentifyService(pool: Pool) {
              RETURNING id, phone_number, email, linked_id, link_precedence, created_at, updated_at, deleted_at`,
             [email ?? null, phone ?? null]
           );
-          const newContact = toContact(inserted.rows[0]);
+          const newContact = toContact(inserted.rows[0] as ContactRow);
           await client.query("COMMIT");
           return buildResponse(newContact, []);
         }
@@ -165,21 +186,7 @@ export function createIdentifyService(pool: Pool) {
           primary = primaryList[0];
         }
 
-        const allInChain = await client.query(
-          `WITH RECURSIVE chain AS (
-             SELECT id, phone_number, email, linked_id, link_precedence, created_at, updated_at, deleted_at
-             FROM contacts WHERE id = $1 AND deleted_at IS NULL
-             UNION ALL
-             SELECT c.id, c.phone_number, c.email, c.linked_id, c.link_precedence, c.created_at, c.updated_at, c.deleted_at
-             FROM contacts c
-             INNER JOIN chain ch ON c.linked_id = ch.id
-             WHERE c.deleted_at IS NULL
-           )
-           SELECT * FROM chain`,
-          [primary.id]
-        );
-
-        const chainRows = allInChain.rows as typeof rows;
+        const chainRows = await fetchChain(client, primary.id);
         const hasExact = chainRows.some(
           (r) =>
             (r.email === email || (email == null && r.email == null)) &&
@@ -197,21 +204,7 @@ export function createIdentifyService(pool: Pool) {
           );
         }
 
-        const updatedChain = await client.query(
-          `WITH RECURSIVE chain AS (
-             SELECT id, phone_number, email, linked_id, link_precedence, created_at, updated_at, deleted_at
-             FROM contacts WHERE id = $1 AND deleted_at IS NULL
-             UNION ALL
-             SELECT c.id, c.phone_number, c.email, c.linked_id, c.link_precedence, c.created_at, c.updated_at, c.deleted_at
-             FROM contacts c
-             INNER JOIN chain ch ON c.linked_id = ch.id
-             WHERE c.deleted_at IS NULL
-           )
-           SELECT * FROM chain`,
-          [primary.id]
-        );
-
-        const finalRows = updatedChain.rows as typeof rows;
+        const finalRows = await fetchChain(client, primary.id);
         const primaryRow = finalRows.find((r) => r.id === primary.id)!;
         const secondaryRows = finalRows.filter((r) => r.id !== primary.id);
         const secondaryContacts = secondaryRows.map(toContact);

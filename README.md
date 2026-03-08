@@ -8,6 +8,8 @@ REST API that identifies and links customer contact details across multiple purc
 
 **Base URL:** `https://identitysync-lw5t.onrender.com`
 
+> **Note:** Hosted on Render's free tier — the instance spins down after 15 minutes of inactivity. First request may take ~30 seconds to cold-start.
+
 ```bash
 curl -X POST https://identitysync-lw5t.onrender.com/identify \
   -H "Content-Type: application/json" \
@@ -41,7 +43,7 @@ curl -X POST https://identitysync-lw5t.onrender.com/identify \
 }
 ```
 
-- `primaryContatctId` — ID of the oldest contact in the linked chain
+- `primaryContatctId` — ID of the oldest contact in the linked chain *(typo preserved from spec)*
 - `emails` — all unique emails, primary's first
 - `phoneNumbers` — all unique phones, primary's first
 - `secondaryContactIds` — IDs of all secondary contacts, ordered by creation time
